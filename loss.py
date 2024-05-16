@@ -14,28 +14,6 @@ from transformers import DataCollatorForLanguageModeling
 torch.manual_seed(8888)
 np.random.seed(8888)
 random.seed(8888)
-
-# class Get_Loss(nn.Module):
-#     def __init__(self,model):
-#         slef.model=model
-
-    
-#     def loss(output,label):
-#         loss=CrossEntropyLoss()
-#         return loss(output,label)
-
-
-
-
-# def loss(output,label):
-#     loss=CrossEntropyLoss()
-    
-#     return loss(output,label)
-
-
-
-
-
 # --------------------------------------------
 
 def get_answer_loss(operation, batch, model, device="cuda"):
@@ -94,18 +72,6 @@ def get_answer_loss(operation, batch, model, device="cuda"):
 
 
 def compute_kl(pretrained_model, current_model, batch, device):
-    """
-    Compute *forward* KL as the normal utility loss.
-
-    Args:
-        pretrained_model: reference model which is the pretrained (original) model.
-        current_model: The current unlearning model.
-        batch: A batch of normal data.
-        device: GPU device.
-
-    Returns:
-       The KL loss.
-    """
     normal_outputs = current_model(
         batch["input_ids"].to(device),
         attention_mask=batch["attention_mask"].to(device),
@@ -127,6 +93,50 @@ def compute_kl(pretrained_model, current_model, batch, device):
 
     return loss
 
+
+def get_rand_ans_loss(bad_batch, tokenizer, normal_ans, model, K=5, device="cuda:0"):
+
+    bad_input_ids = bad_batch["input_ids"].to(device)
+    rand_ans_list = random.sample(normal_ans, k=K)
+    batch_random_features = []
+    for batch_idx in range(bad_input_ids.shape[0]):
+        single_input_id = bad_input_ids[batch_idx, :]
+        ori_text = tokenizer.decode(single_input_id)
+        # Get question.
+        question = ori_text.split("\n")[1].split("<")[0].strip()
+        text = f"<|user|>\n{question}</s>\n<|assistant|>\n"
+
+        question_prefix = f"### Question: {question}\n ### Answer: "
+        tokenized_question_prefix = tokenizer(
+            question_prefix, truncation=True, padding="max_length"
+        )
+        # Doesn't need to minus 1 because there's a starting token in the beginning.
+        start_loc = len(tokenized_question_prefix)
+
+        # Get random answer.
+        for rand_ans in rand_ans_list:
+            random_sample = f"{question_prefix}{rand_ans}</s>"
+
+            # Tokenize.
+            tokenized_rs = tokenizer(
+                random_sample, truncation=True, padding="max_length"
+            )
+            batch_random_features.append(
+                {
+                    "input_ids": tokenized_rs["input_ids"],
+                    "attention_mask": tokenized_rs["attention_mask"],
+                    "start_locs": start_loc,
+                }
+            )
+
+    # Batchify.
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    batch_random = data_collator(batch_random_features)
+
+    # GD on answer.
+    random_loss = get_answer_loss("gd", batch_random, model, device=device)
+
+    return random_loss
 
 
 
