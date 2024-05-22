@@ -1,6 +1,7 @@
 import argparse
 MODEL_LIST = [
     "tinyllama", 
+    "opt1.3b"
     "llama7b", 
 ]
 
@@ -12,6 +13,16 @@ def Argument():
         action="store_true"
     )
 
+    parser.add_argument(
+        "--save_dir",
+        type=str,
+        default="evaluation_metric",
+    )
+    parser.add_argument(
+        "--loss_filename",
+        type=str,
+        default="loss",
+    )
     parser.add_argument(
         "--retain_dataset",
         type=str,
@@ -29,6 +40,12 @@ def Argument():
     )
     parser.add_argument(
         "--retain_weight",
+        type=float,
+        default=1,
+        help="Weight on learning the retain outputs.",
+    )
+    parser.add_argument(
+        "--random_weight",
         type=float,
         default=1,
         help="Weight on learning the retain outputs.",
@@ -64,7 +81,7 @@ def Argument():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="/media/respailab/Volume 2/RespAI-Jupyter-Server/Priyansh-Rishav/LLM_Unlearn_Paper/tinyllama-colorist-v1/checkpoint-300/",
+        default=None,
         help="Path of the finetuned model.",
         choices=MODEL_LIST
     )

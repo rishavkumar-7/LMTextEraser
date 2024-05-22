@@ -25,8 +25,8 @@ from peft import get_peft_config, get_peft_model, PromptTuningInit, PromptTuning
 from torch.optim import AdamW
 # from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 from transformers import AutoModelForCausalLM, AutoTokenizer, default_data_collator, get_linear_schedule_with_warmup
-from createDataset import create_forget_dataloader,create_retain_dataloader
-from loss import get_answer_loss,compute_kl
+from createDataset import create_forget_dataloader,create_retain_dataloader,get_original_dataset
+from loss import get_answer_loss,compute_kl,get_rand_ans_loss
 
 torch.manual_seed(8888)
 np.random.seed(8888)
@@ -34,8 +34,8 @@ random.seed(8888)
 
 
 # FineTuned_ModelPath = {
-#     "tinyllama": "Priyansh-Rishav/lmeraser/tinyllama-colorist-v1/checkpoint-100/", 
-#     # "llama7b": "", 
+#     "tinyllama": "Priyansh-Rishav/lmeraser/tinyllama-colorist-v1/checkpoint-300/", 
+#     # "opt1.3b": "", 
 # }
 
 
@@ -45,7 +45,14 @@ def main(args) -> None:
     accelerator = Accelerator() 
     #device = accelerator.device # it returns cuda as device : want cuda:1 so device set globally
     device="cuda:2"
+    bleu_dataset={"original":[],"normal":[],"unlearn":[]}
 
+    if model_name == "tinyllama":
+        args.model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+        args.model_path="/media/respailab/Volume 2/RespAI-Jupyter-Server/Priyansh-Rishav/LLM_Unlearn_Paper/tinyllama-colorist-v1/checkpoint-300/"
+    else:
+        args.model_name="facebook/opt-1.3b"
+        args.model_path="/media/respailab/Volume 2/RespAI-Jupyter-Server/Priyansh-Rishav/LLM_Unlearn_Paper/opt1.3b_finetuned_model/"
     # model = AutoModelForCausalLM.from_pretrained(args.model_name)
     model = AutoModelForCausalLM.from_pretrained(args.model_path)
     # Modified for prompt tuning
@@ -90,6 +97,7 @@ def main(args) -> None:
 
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++
     train_normal_loader=create_retain_dataloader(batch_size=args.batch_size)
+    bleu_dataset["original"]=get_original_dataset()
     # ++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # Load normal answer used for random mismatch.
     # normal_ans = get_truthfulQA_answers_plaintext()
@@ -177,32 +185,42 @@ def main(args) -> None:
     bad_loss = 0.0
     idx = 0
     start_time = time.time()
+    _bad_loss=[]
+    _normal_loss=[]
+    _retain_loss=[]
+    _total_loss=[]
+    _random_loss=[]
     # Stop if bad loss is big enough or reaching max step.
     while bad_loss < args.max_bad_loss and idx < args.max_unlearn_steps:
         for bad_batch, normal_batch in zip(train_bad_loader, train_normal_loader):
             ############ GA on answer only. ############
             bad_loss = get_answer_loss("ga", bad_batch, model, device=device)         #gets lossss
+            _bad_loss.append(bad_loss.item())
             # bad_loss_original=get_answer_loss("ga",bad_batch,pretrained_model,device=device)
             retain_loss=get_answer_loss("gd",normal_batch,pretrained_model,device=device)
+            _retain_loss.append(retain_loss.item())
             ############ Random mismatch. ############
-            # random_loss = get_rand_ans_loss(
-            #     bad_batch,
-            #     tokenizer,
-            #     normal_ans,
-            #     model,
-            #     K=5,
-            #     device=device,
-            # )
+            random_loss = get_rand_ans_loss(
+                bad_batch,
+                tokenizer,
+                normal_ans,
+                model,
+                K=5,
+                device=device,
+            )
+            _random_loss.append(random_loss.item())
 
             ############ KL on normal samples. ############
             normal_loss = compute_kl(pretrained_model, model, normal_batch, device)
+            _normal_loss.append(normal_loss.item())
 
             # Final loss = bad loss + random smoothing + normal loss.
             loss = (
                 args.bad_weight * bad_loss+
-                # args.bad_weight * bad_loss_original
-                +args.retain_weight*retain_loss+
+                args.random_weight * random_loss+
+                args.retain_weight*retain_loss+
                 args.normal_weight * normal_loss)
+            _total_loss.append(loss.item())
 
             # Backprop.
             accelerator.backward(loss)
@@ -214,7 +232,7 @@ def main(args) -> None:
             stats = (
                 f"batch: {idx}, "
                 f"bad_loss: {-bad_loss:.2f}, "
-                # f"bad_loss_original: {-bad_loss_original:.2f}, "
+                f"random_loss: {-random_loss:.2f}, "
                 f"current_div_loss: {normal_loss:.2f}, "
             )
             logging.info(stats)
@@ -227,18 +245,60 @@ def main(args) -> None:
     end_time = time.time()
     logging.info("Total time: %d sec" % (end_time - start_time))
 
-    if args.use_prompt_tuning : #args.use_lora:
-        model = model.merge_and_unload()
+    # if args.use_prompt_tuning : #args.use_lora:
+    #     model = model.merge_and_unload() ### change this to peft
 
     # Save final model.
-    model.save_pretrained(args.model_save_dir, from_pt=True,force_download=True)
+    # model.save_pretrained(args.model_save_dir, from_pt=True,force_download=True)
+    model.save_pretrained(args.model_save_dir)
     logging.info("Unlearning finished")
+    plot_total_loss_graph(bad=_bad_loss,retain=_retain_loss,random=_random_loss,normal=_normal_loss,total=_total_loss,name="Total_")
+    if args._generate_bleu :
+        original_model=args.model_
+        unlearn_model=args.model_path
 
     return
 
-def loss(output,label):
-        loss=CrossEntropyLoss()
-        return loss(output,label)
+
+def plot_loss_graph(loss,name):
+    
+    plt.plot(loss, label=name+'Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss') 
+    plt.legend()
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
+        print('Path created successfully')
+    save_path = os.path.join(args.save_dir, name+args.loss_filename)
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Loss graph saved at: {save_path}")
+
+
+def plot_total_loss_graph(bad,retain,random,normal,total,name):
+    
+    plt.plot(bad, label='Bad Loss')
+    plt.plot(retain, label='Retain loss')
+    plt.plot(random, label='Random loss')
+    plt.plot(normal, label='Normal loss')
+    plt.plot(total, label='Total loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss') 
+    plt.legend()
+
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
+        print('Path created successfully')
+    save_path = os.path.join(args.save_dir, name+args.loss_filename)
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Loss graph saved at: {save_path}")
+    plot_loss_graph(bad,"Bad")
+    plot_loss_graph(retain,"Retain")
+    plot_loss_graph(random,"Random")    
+    plot_loss_graph(normal,"Normal")
+    plot_loss_graph(total,"Total")
+    
 
 
 if __name__ == "__main__":
