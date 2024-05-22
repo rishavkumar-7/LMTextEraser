@@ -37,6 +37,26 @@ random.seed(8888)
 #     "tinyllama": "Priyansh-Rishav/lmeraser/tinyllama-colorist-v1/checkpoint-300/", 
 #     # "opt1.3b": "", 
 # }
+Model_Path={
+    "tinyllama":
+    {
+        "original":"TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "fine-tuned":"/media/respailab/Volume 2/RespAI-Jupyter-Server/Priyansh-Rishav/LLM_Unlearn_Paper/tinyllama-colorist-v1/checkpoint-300/",
+        "unlearned":"/media/respailab/Volume 2/RespAI-Jupyter-Server/Priyansh-Rishav/LLM-Unlearn-Fork/TextEraserCode/models/tinyllama_unlearned_color/"
+    },
+    "opt":
+    {
+        "original":"facebook/opt-1.3b",
+        "fine-tuned":"/media/respailab/Volume 2/RespAI-Jupyter-Server/Priyansh-Rishav/LLM_Unlearn_Paper/opt1.3b_finetuned_model/",
+        "unlearned":""
+    },
+    "llama7b":
+    {
+        "original":"",
+        "fine-tuned":"",
+        "unlearned":""
+    }
+}
 
 
 device="cuda:2"
@@ -254,9 +274,27 @@ def main(args) -> None:
     logging.info("Unlearning finished")
     plot_total_loss_graph(bad=_bad_loss,retain=_retain_loss,random=_random_loss,normal=_normal_loss,total=_total_loss,name="Total_")
     if args._generate_bleu :
-        original_model=args.model_
+        original_model=args.model_name
         unlearn_model=args.model_path
+        if "llama-2" not in args.model_name:
+            """LoRA model inference"""
+            ### add model code also from LoRA ipynb
+            generation_config=GenerationConfig(
+                penalty_alpha=0.6,do_sample=True,top_k=5,
+                temperature=0.5,repetition_penalty=1.2,
+                max_new_tokens=120,pad_token_id=tokenizer.eos_token_id)
+            inputs = tokenizer(prompt, return_tensors="pt").to(device) # change input to fetch each data from dataset
+            outputs = model.generate(**inputs, generation_config=generation_config)
+            response=tokenizer.decode(outputs[0], skip_special_tokens=True)
+            only_response=split_response(response,"tinyllama")
+            bleu_dataset["normal"].append(only_response)
+            """Unlearn model inference"""
+            
 
+
+
+
+    
     return
 
 

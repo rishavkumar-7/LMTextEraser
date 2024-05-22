@@ -105,8 +105,7 @@ def get_rand_ans_loss(bad_batch, tokenizer, normal_ans, model, K=5, device="cuda
         # Get question.
         question = ori_text.split("\n")[1].split("<")[0].strip()
         text = f"<|user|>\n{question}</s>\n<|assistant|>\n"
-
-        question_prefix = f"### Question: {question}\n ### Answer: "
+        question_prefix = text
         tokenized_question_prefix = tokenizer(
             question_prefix, truncation=True, padding="max_length"
         )

@@ -1,9 +1,8 @@
 import argparse
-MODEL_LIST = [
-    "tinyllama", 
-    "opt1.3b"
-    "llama7b", 
-]
+MODEL_LIST = ["TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+              "facebook/opt-1.3b",
+              "NousResearch/Llama-2-7b-chat-hf"
+             ]
 
 def Argument():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -83,7 +82,6 @@ def Argument():
         type=str,
         default=None,
         help="Path of the finetuned model.",
-        choices=MODEL_LIST
     )
     parser.add_argument(
         "--model_name",
