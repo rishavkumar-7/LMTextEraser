@@ -80,7 +80,7 @@ def Argument():
     parser.add_argument(
         "--model_path",
         type=str,
-        default=None,
+        default="/media/respailab/Volume 2/RespAI-Jupyter-Server/Priyansh-Rishav/LLM_Unlearn_Paper/tinyllama-colorist-v1/checkpoint-300/",
         help="Path of the finetuned model.",
     )
     parser.add_argument(
@@ -88,6 +88,13 @@ def Argument():
         type=str,
         default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
         help="Name of the finetuned model.",
+        choices=MODEL_LIST
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="tinyllama",
+        help="base model name to use for unleaning ",
         choices=MODEL_LIST
     )
 
