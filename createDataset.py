@@ -75,12 +75,12 @@ class Dataset_Loader_Retain(Dataset):
 
 
 
-def create_forget_dataloader(dataset_name="burkelibbey/colors",q_col="description",r_col="color" , batch_size=4):
+def create_forget_dataloader(dataset_name="PKU-Alignment/PKU-SafeRLHF",split=None, batch_size=4):
     # dataset = load_dataset(dataset_name,split="train")
     # forget_dataloader = Dataset_Loader_Forget(q_col, r_col, dataset, tokenizer)
     # dataloader = DataLoader(forget_dataloader, batch_size=batch_size,collate_fn=data_collator)
     # return dataloader
-    return create_forget_dataloaderr(tokenizer)
+    return create_forget_dataloaderr(tokenizer,dataset_name,split)
 
 # def create_retain_dataloader(dataset_name="truthfulQA", batch_size=4):
 #     if dataset_name == "truthfulQA":
@@ -96,6 +96,7 @@ def create_forget_dataloader(dataset_name="burkelibbey/colors",q_col="descriptio
 
 #     return data_loader
 def create_retain_dataloader(dataset_name="truthfulQA", batch_size=4):
+    print(f"Importing : {dataset_name}")
     if dataset_name == "truthfulQA":
         dataset = load_dataset("truthful_qa", 'generation')["validation"]
         retain_dataset = dataset.map(batched=True, remove_columns=['type', 'category', 'correct_answers', 'incorrect_answers', 'source'])
@@ -115,6 +116,7 @@ def create_retain_dataloader(dataset_name="truthfulQA", batch_size=4):
     retain_dataset = dt.from_dict(data_dict)
     # dataset_loader = Dataset_Loader_Retain(retain_dataset, tokenizer, data_dict)
     data_loader = DataLoader(retain_dataset, batch_size=batch_size, collate_fn=data_collator, shuffle=True)
+    print(f"DataLoader created : {dataset_name}")
 
     return data_loader
 

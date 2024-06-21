@@ -18,6 +18,11 @@ def Argument():
         default="evaluation_metric",
     )
     parser.add_argument(
+        "--_generate_bleu",
+        type=bool,
+        default=True,
+    )
+    parser.add_argument(
         "--loss_filename",
         type=str,
         default="loss",
@@ -86,7 +91,7 @@ def Argument():
     parser.add_argument(
         "--model_name",
         type=str,
-        default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        default="facebook/opt-1.3b",
         help="Name of the finetuned model.",
         choices=MODEL_LIST
     )
@@ -102,7 +107,7 @@ def Argument():
     parser.add_argument(
         "--model_save_dir",
         type=str,
-        default="models/tinyllama_unlearned_color",
+        default="models/tinyllama_unlearned_color/",
         help="Directory to save model.",
     )
 
