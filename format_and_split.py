@@ -28,8 +28,17 @@ def format_prompt_q(question,template=False, model_name=args.model_name):
         
 
 
-def split_response(response, model_name=args.model_name):
+def split_response(responses, model_name=args.model_name):
+    response_list = []
     if "tiny" in model_name or "opt" in model_name:
-        return response.split("<|assistant|>\n")[1].split("</s>")[0]
+        if args.batch_size > 1 :
+            for response in responses:
+                response_list.append(response.split("<|assistant|>\n")[1].split("</s>")[0])
+
+        # else :
+        #     responses[0].split("<|assistant|>\n")[1].split("</s>")[0]
     else:
-        return response.split("]")[2].split("</s>")[0]
+        if args.batch_size > 1 :
+            for response in responses:
+                response_list.append(response.split("]")[2].split("</s>")[0])
+    return response_list

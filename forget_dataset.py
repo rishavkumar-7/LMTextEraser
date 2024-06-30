@@ -3,6 +3,7 @@ from format_and_split import format_training_prompt,format_prompt_q
 from transformers import DataCollatorForLanguageModeling
 from torch.utils.data import DataLoader, Dataset
 import  torch
+from peft import PromptEmbedding, PromptTuningConfig  # Import PromptEmbedding and PromptTuningConfig
 
 import random
 
@@ -82,12 +83,6 @@ def create_forget_dataloaderr(tokenizer, dataset_name="PKU-Alignment/PKU-SafeRLH
 
         return results
 
-    def debug_tokenize_functionq(example):
-        tokenized_example = tokenizer(example['prompt']+example["response_0"], padding='max_length', truncation=True,max_length=2)
-        print(tokenized_example["input_ids"])
-        print(f"Tokenized input_ids length: {len(tokenized_example['input_ids'])}")
-        return tokenized_example
-
     def preproccess_PKU_All(examples):
         """
         Input: Dict[List]
@@ -127,8 +122,11 @@ def create_forget_dataloaderr(tokenizer, dataset_name="PKU-Alignment/PKU-SafeRLH
 
     if split == None:
         split = "train"
-    print(f"Importing Dataset : {dataset_name}/{split}")
-    dataset = load_dataset(dataset_name,split=split)
+
+    # dataset_name="PKU-Alignment/PKU-SafeRLHF"
+    print(f"\nImporting Dataset : {dataset_name}/{split}")
+    dataset = load_dataset("PKU-Alignment/PKU-SafeRLHF",split=split)
+    
     if dataset_name == "PKU-Alignment/PKU-SafeRLHF":
         # dataset = dataset.map(debug_tokenize_functionq, batched=True)
 
@@ -168,5 +166,12 @@ def create_forget_dataloaderr(tokenizer, dataset_name="PKU-Alignment/PKU-SafeRLH
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=batch_size, collate_fn=data_collator
     )
-    print(f"DataLoader created : {dataset_name}/{split}")
+    print(f"\nDataLoader created : {dataset_name}/{split}")
     return dataloader
+
+
+
+
+
+
+

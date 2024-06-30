@@ -21,12 +21,12 @@ import numpy as np
 import torch
 from accelerate import Accelerator
 from datasets import load_dataset
-from peft import get_peft_config, get_peft_model, PromptTuningInit, PromptTuningConfig, TaskType, PeftType
-
+from peft import get_peft_config, get_peft_model, PromptTuningInit, PromptTuningConfig,PromptEmbedding, TaskType, PeftType
+from bleu import Bleu
 from torch.optim import AdamW
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup, get_scheduler
 from createDataset import create_forget_dataloader,create_retain_dataloader , get_truthfulQA_answers_plaintext #,get_original_dataset
-from loss import get_answer_loss,compute_kl,get_rand_ans_loss,get_answer_loss1
+from loss import get_answer_loss,compute_kl,get_rand_ans_loss
 from format_and_split import split_response
 
 torch.manual_seed(8888)
@@ -56,7 +56,7 @@ Model_Path={
 
 
 device="cuda:2"
-
+device_p="cuda:1"
 def main(args) -> None:
     accelerator = Accelerator() 
     device="cuda:2"
@@ -73,17 +73,24 @@ def main(args) -> None:
     '''When using the finetuned model for training , it gives RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn'''
     # model = AutoModelForCausalLM.from_pretrained(args.model_path) #  using the finetuned model for training , it gives RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
     model = AutoModelForCausalLM.from_pretrained(args.model_name) #  using the pretrained model from Hugging face library
-    if args.use_prompt_tuning:
-        peft_config = PromptTuningConfig(
-            task_type=TaskType.CAUSAL_LM,
-            prompt_tuning_init=PromptTuningInit.TEXT,
-            num_virtual_tokens=8,
-            prompt_tuning_init_text="I have to forget this ,it is harmful for me :",
-            tokenizer_name_or_path=args.model_name,
-        )
+    base_model = model  # Load your base model here
+    word_embeddings =  base_model.model.decoder.embed_tokens  
+    # model for unlearning 
+    # if args.use_prompt_tuning:
+    peft_config = PromptTuningConfig(
+        task_type=TaskType.CAUSAL_LM,
+        prompt_tuning_init=PromptTuningInit.TEXT,
+        num_transformer_submodules=1,
+        token_dim=2048,
+        num_virtual_tokens=args.num_virtual_tokens,
+        prompt_tuning_init_text="I have to forget this ,it is harmful for me :",
+        tokenizer_name_or_path=args.model_name,
+    )
+    prompt_embedding = PromptEmbedding(peft_config, word_embeddings)
 
-        # ----------------------------------------------------
-        model = get_peft_model(model, peft_config)
+    # ----------------------------------------------------
+    model = get_peft_model(model, peft_config)
+    print(model.print_trainable_parameters())
 
     model.to(device)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
@@ -95,7 +102,9 @@ def main(args) -> None:
     #     tokenizer, train_dataset, batch_size=args.batch_size
     # )
     # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # train_bad_loader=create_forget_dataloader(prompt_embedding, peft_config.num_virtual_tokens,batch_size=args.batch_size)
     train_bad_loader=create_forget_dataloader(batch_size=args.batch_size)
+
     # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # Get normal data.
     # train_normal_loader, _, _ = create_truthfulqa_dataloader(
@@ -141,8 +150,8 @@ def main(args) -> None:
     model.train()
     
     # Reference model for computing KL.
-    pretrained_model = AutoModelForCausalLM.from_pretrained(args.model_name)
-    pretrained_model.to(device)
+    pretrained_model = AutoModelForCausalLM.from_pretrained(args.model_name) # model for reference answers
+    pretrained_model.to(device_p)
 
     # Start unlearning.
     bad_loss = 0.0
@@ -150,23 +159,24 @@ def main(args) -> None:
     start_time = time.time()
     _bad_loss=[]
     _normal_loss=[]
-    _retain_loss=[]
     _total_loss=[]
     _random_loss=[]
     # Stop if bad loss is big enough or reaching max step.
-    while bad_loss < args.max_bad_loss and idx < args.max_unlearn_steps:
+    # while bad_loss < args.max_bad_loss and idx < args.max_unlearn_steps:
+    for epoch in range(args.epochs):
         for bad_batch, normal_batch in zip(train_bad_loader, train_normal_loader):
             ############ GA on answer only. ############
             ''' First loss '''
             bad_loss = get_answer_loss("ga", bad_batch,model,device=device)
-            _bad_loss.append(bad_loss.item())
+            _bad_loss.append(-bad_loss.item())
             ########### Random mismatch. ############
             ''' Second Loss'''
             random_loss = get_rand_ans_loss(bad_batch,tokenizer,normal_ans,model,K=5,device=device,)
             _random_loss.append(random_loss.item())
             ############ KL on normal samples. ############
             ''' Third loss '''
-            normal_loss = compute_kl(pretrained_model, model, normal_batch, device)
+            # normal_loss = compute_kl(pretrained_model, model, normal_batch, device) # same cuda code
+            normal_loss = compute_kl(pretrained_model, model, normal_batch, device_p,device) # differnet cuda code
             _normal_loss.append(normal_loss.item())
             # Final loss = bad loss + random smoothing + normal loss.
             loss = (args.bad_weight * bad_loss+args.random_weight * random_loss+args.normal_weight * normal_loss)
@@ -186,10 +196,15 @@ def main(args) -> None:
             logging.info(stats)
             print(stats)
             idx += 1
-
             # Save model.
             if idx % args.save_every == 0:
                 model.save_pretrained(args.model_save_dir, from_pt=True)
+        print(f"Epoch {epoch} of {args.epochs} completed. ")
+
+    
+    # Save model.
+    if idx % args.save_every == 0:
+        model.save_pretrained(args.model_save_dir, from_pt=True)
     end_time = time.time()
     logging.info("Total time: %d sec" % (end_time - start_time))
 
@@ -221,8 +236,8 @@ def main(args) -> None:
             "actual" : []
         }
         bleu_test_dataset = create_forget_dataloader(split="test",batch_size=args.batch_size)
-        inference_unlearn_model = Inference_model(unlearned_model)
-        inference_original_model = Inference_model(foundational_model)
+        inference_unlearn_model = Inference_Model(unlearned_model,device)
+        inference_original_model = Inference_Model(foundational_model,device)
         if "llama-2" not in args.model_name:
             # """LoRA model inference"""
             # ### add model code also from LoRA ipynb
@@ -236,18 +251,32 @@ def main(args) -> None:
             # only_response=split_response(response,"tinyllama")
             # bleu_dataset["normal"].append(only_response)
             """Unlearn model inference"""
-            print(f"Model inference started ...")
-            for test_input in bleu_test_dataset :# run loop on PKU_safe, split="test" . for both the models , the original one and the unlearned model 
-                input = tokenizer(test_input, return_tensors="pt")
-                unlearn_model_output = inference_unlearn_model.get_outputs(input_prompt)
-                original_model_output = inference_original_model.get_outputs(input_prompt)
-                bleu_score_dataset["original"].append(original_model_output)
-                bleu_score_dataset["unlearn"].append(unlearn_model_output)
-                bleu_score_dataset["actual"].append(split_response(test_input))
-            print(f"Model inference Completed.")
+            print(f"\nModel inference started ...")
+            for i,test_input in enumerate(bleu_test_dataset) :# run loop on PKU_safe, split="test" . for both the models , the original one and the unlearned model 
+                # raise RuntimeError(f"type : {type(test_input)} \n {test_input}")
+                # input = tokenizer(test_input, return_tensors="pt")
+                unlearn_model_output = inference_unlearn_model.get_outputs(test_input)
+                original_model_output = inference_original_model.get_outputs(test_input)
+                                                                            
+                unlearn_response=tokenizer.batch_decode(unlearn_model_output, skip_special_tokens=True)
+                original_response=tokenizer.batch_decode(original_model_output, skip_special_tokens=True)
+                actual_response=tokenizer.batch_decode(test_input["input_ids"], skip_special_tokens=True) 
+                
+                # raise RuntimeError(f"\n\nactual response{len(actual_response)}\n\n original\n {len(original_response)}\n\n unlearn {len(unlearn_response)}")
+                bleu_score_dataset["original"].extend(original_response)
+                bleu_score_dataset["unlearn"].extend(unlearn_response)
+                bleu_score_dataset["actual"].extend(split_response(actual_response)) # encode back to strings
+                if i % 10 == 0:
+                    print(f"{i} done out of {len(bleu_test_dataset)}")
+
+                if i == 50:
+                    break
+            print(f"\nModel inference Completed.")
         bleu_score_calc = Bleu(bleu_score_dataset)
-        (bleu_score_A_F, bleu_score_O_F, bleu_score_A_O)=bleu_score_calc.evaluate_model()
-        print(f"Score A/F: {bleu_score_A_F}\nScore O/F: {bleu_score_O_F}\nScore A/O: {bleu_score_A_O}")
+        bleu_score_F_O = bleu_score_calc.evaluate_model()
+         # , bleu_score_O_F, bleu_score_A_O)=
+        print(f'BLEU : {bleu_score_F_O["bleu"]}\nPrecision : {bleu_score_F_O["precisions"]}\nBrevity_penalty : {bleu_score_F_O["brevity_penalty"]}\nLength_ratio : {bleu_score_F_O["length_ratio"]}\nTranslation_length : {bleu_score_F_O["translation_length"]}\nReference_length : {bleu_score_F_O["reference_length"]}\n')
+        # print(f"\nScore F/O: {bleu_score_F_O}") #Score O/F: {bleu_score_O_F}\nScore A/O: {bleu_score_A_O}\n
 
     return
 
@@ -267,7 +296,7 @@ def plot_loss_graph(loss,name):
     print(f"Loss graph saved at: {save_path}")
 
 
-def plot_total_loss_graph(bad,retain,random,normal,total,name):
+def plot_total_loss_graph(bad,random,normal,total,name):
     
     plt.plot(bad, label='Bad Loss')
     plt.plot(random, label='Random loss')
@@ -290,10 +319,13 @@ def plot_total_loss_graph(bad,retain,random,normal,total,name):
     plot_loss_graph(total,"Total")
 
 class Inference_Model:
-    def __init__(self,model):
-        self.model=model
+    def __init__(self,model,device):
+        # self.model=model
+        self.device = device
+        self.model=model.to(self.device)
         
-    def get_outputs(inputs, max_new_tokens=200):
+    def get_outputs(self,inputs, max_new_tokens=200):
+        inputs = inputs.to(self.device)
         outputs = self.model.generate(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
@@ -303,7 +335,7 @@ class Inference_Model:
             # do_sample=True,
             repetition_penalty=1.5,  # Avoid repetition.
             early_stopping=True,  # The model can stop before reach the max_length
-            eos_token_id=tokenizer.eos_token_id,
+            # eos_token_id=tokenizer.eos_token_id,
         )
         return outputs
 

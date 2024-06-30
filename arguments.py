@@ -7,15 +7,23 @@ MODEL_LIST = ["TinyLlama/TinyLlama-1.1B-Chat-v1.0",
 def Argument():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument(
-        "--use_prompt_tuning",
-        action="store_true"
-    )
+    # parser.add_argument(
+    #     "--use_prompt_tuning",
+    #     # type=bool,
+    #     # default=True
+    #     action="store_true"
+    # )
 
     parser.add_argument(
         "--save_dir",
         type=str,
         default="evaluation_metric",
+    )
+
+    parser.add_argument(
+        "--num_virtual_tokens",
+        type=int,
+        default=8,
     )
     parser.add_argument(
         "--_generate_bleu",
@@ -64,7 +72,7 @@ def Argument():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=2,
+        default=1,
         help="Batch size of unlearning.",
     )
 
@@ -115,6 +123,12 @@ def Argument():
         "--save_every",
         type=int,
         default=500,
+        help="How many steps to save model.",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=5,
         help="How many steps to save model.",
     )
 
