@@ -99,7 +99,7 @@ def Argument():
     parser.add_argument(
         "--model_name",
         type=str,
-        default="facebook/opt-1.3b",
+        default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
         help="Name of the finetuned model.",
         choices=MODEL_LIST
     )
@@ -128,8 +128,20 @@ def Argument():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=5,
+        default=1,
         help="How many steps to save model.",
+    )
+    parser.add_argument(
+        "--f_device",
+        type=int,
+        default=0,
+        help="Unlearn model device ",
+    )
+    parser.add_argument(
+        "--p_device",
+        type=int,
+        default=1,
+        help="Pretrained model device",
     )
 
     parser.add_argument(

@@ -28,6 +28,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedul
 from createDataset import create_forget_dataloader,create_retain_dataloader , get_truthfulQA_answers_plaintext #,get_original_dataset
 from loss import get_answer_loss,compute_kl,get_rand_ans_loss
 from format_and_split import split_response
+from forget_dataset import inference_prompt
 
 torch.manual_seed(8888)
 np.random.seed(8888)
@@ -54,12 +55,10 @@ Model_Path={
     }
 }
 
-
-device="cuda:2"
-device_p="cuda:1"
+device=args.f_device
+device_p=args.p_device
 def main(args) -> None:
     accelerator = Accelerator() 
-    device="cuda:2"
     bleu_dataset={"original":[],"normal":[],"unlearn":[]}
 
     # if args.model == "tinyllama":
@@ -73,24 +72,20 @@ def main(args) -> None:
     '''When using the finetuned model for training , it gives RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn'''
     # model = AutoModelForCausalLM.from_pretrained(args.model_path) #  using the finetuned model for training , it gives RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
     model = AutoModelForCausalLM.from_pretrained(args.model_name) #  using the pretrained model from Hugging face library
-    base_model = model  # Load your base model here
-    word_embeddings =  base_model.model.decoder.embed_tokens  
     # model for unlearning 
     # if args.use_prompt_tuning:
     peft_config = PromptTuningConfig(
         task_type=TaskType.CAUSAL_LM,
         prompt_tuning_init=PromptTuningInit.TEXT,
-        num_transformer_submodules=1,
         token_dim=2048,
         num_virtual_tokens=args.num_virtual_tokens,
         prompt_tuning_init_text="I have to forget this ,it is harmful for me :",
         tokenizer_name_or_path=args.model_name,
     )
-    prompt_embedding = PromptEmbedding(peft_config, word_embeddings)
-
     # ----------------------------------------------------
     model = get_peft_model(model, peft_config)
-    print(model.print_trainable_parameters())
+    params=model.print_trainable_parameters()
+    print(params)
 
     model.to(device)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
@@ -224,6 +219,7 @@ def main(args) -> None:
     ''' # 2 thimgs needed for inference of unlearned model 1st original model path which is hf lib for now and 2nd is unlearned saved model path which is model_save_dir for now.......'''
     if args._generate_bleu : # for bleu score calcultion
         tokenizer = AutoTokenizer.from_pretrained(args.model_name) # change the name for easy model access
+        original_model = AutoModelForCausalLM.from_pretrained(args.model_name)
         foundational_model = AutoModelForCausalLM.from_pretrained(args.model_name) # foundational_model is original model path 
         unlearned_model = PeftModel.from_pretrained(   
             model = foundational_model,
@@ -235,9 +231,9 @@ def main(args) -> None:
             "unlearn" : [],
             "actual" : []
         }
-        bleu_test_dataset = create_forget_dataloader(split="test",batch_size=args.batch_size)
+        bleu_test_dataset = inference_prompt(batch_size=args.batch_size)
         inference_unlearn_model = Inference_Model(unlearned_model,device)
-        inference_original_model = Inference_Model(foundational_model,device)
+        inference_original_model = Inference_Model(original_model,device)
         if "llama-2" not in args.model_name:
             # """LoRA model inference"""
             # ### add model code also from LoRA ipynb
@@ -252,30 +248,36 @@ def main(args) -> None:
             # bleu_dataset["normal"].append(only_response)
             """Unlearn model inference"""
             print(f"\nModel inference started ...")
-            for i,test_input in enumerate(bleu_test_dataset) :# run loop on PKU_safe, split="test" . for both the models , the original one and the unlearned model 
-                # raise RuntimeError(f"type : {type(test_input)} \n {test_input}")
+            # raise RuntimeError(f"type : {len(bleu_test_dataset)} \n {bleu_test_dataset}")
+            for i,test_input in zip(range(len(bleu_test_dataset)),bleu_test_dataset) :# run loop on PKU_safe, split="test" . for both the models , the original one and the unlearned model 
+                # raise RuntimeError(f"type : {type(test_input)} \n {test_input['response']}")
                 # input = tokenizer(test_input, return_tensors="pt")
                 unlearn_model_output = inference_unlearn_model.get_outputs(test_input)
                 original_model_output = inference_original_model.get_outputs(test_input)
                                                                             
                 unlearn_response=tokenizer.batch_decode(unlearn_model_output, skip_special_tokens=True)
                 original_response=tokenizer.batch_decode(original_model_output, skip_special_tokens=True)
-                actual_response=tokenizer.batch_decode(test_input["input_ids"], skip_special_tokens=True) 
+                actual_response=tokenizer.batch_decode(test_input["response"], skip_special_tokens=True)
+                if i==1 or i==4:
+                    print(f"unlearn_response\n{unlearn_response}\n\noriginal_response\n{original_response}\n\nactual_response\n{actual_response}")
                 
                 # raise RuntimeError(f"\n\nactual response{len(actual_response)}\n\n original\n {len(original_response)}\n\n unlearn {len(unlearn_response)}")
                 bleu_score_dataset["original"].extend(original_response)
                 bleu_score_dataset["unlearn"].extend(unlearn_response)
-                bleu_score_dataset["actual"].extend(split_response(actual_response)) # encode back to strings
+                bleu_score_dataset["actual"].extend(actual_response) # encode back to strings
                 if i % 10 == 0:
                     print(f"{i} done out of {len(bleu_test_dataset)}")
 
-                if i == 50:
+                if i == 5:
                     break
             print(f"\nModel inference Completed.")
         bleu_score_calc = Bleu(bleu_score_dataset)
-        bleu_score_F_O = bleu_score_calc.evaluate_model()
+        bleu_score_F_O, bleu_score_O_A = bleu_score_calc.evaluate_model()
          # , bleu_score_O_F, bleu_score_A_O)=
-        print(f'BLEU : {bleu_score_F_O["bleu"]}\nPrecision : {bleu_score_F_O["precisions"]}\nBrevity_penalty : {bleu_score_F_O["brevity_penalty"]}\nLength_ratio : {bleu_score_F_O["length_ratio"]}\nTranslation_length : {bleu_score_F_O["translation_length"]}\nReference_length : {bleu_score_F_O["reference_length"]}\n')
+        print(f'F/O\nBLEU : {bleu_score_F_O["bleu"]}\nPrecision : {bleu_score_F_O["precisions"]}\nBrevity_penalty : {bleu_score_F_O["brevity_penalty"]}\nLength_ratio : {bleu_score_F_O["length_ratio"]}\nTranslation_length : {bleu_score_F_O["translation_length"]}\nReference_length : {bleu_score_F_O["reference_length"]}\n')
+        print(f'O/A\nBLEU : {bleu_score_O_A["bleu"]}\nPrecision : {bleu_score_O_A["precisions"]}\nBrevity_penalty : {bleu_score_O_A["brevity_penalty"]}\nLength_ratio : {bleu_score_O_A["length_ratio"]}\nTranslation_length : {bleu_score_O_A["translation_length"]}\nReference_length : {bleu_score_O_A["reference_length"]}\n')
+        print(params)
+        # print(model.print_trainable_parameters())
         # print(f"\nScore F/O: {bleu_score_F_O}") #Score O/F: {bleu_score_O_F}\nScore A/O: {bleu_score_A_O}\n
 
     return
@@ -325,7 +327,8 @@ class Inference_Model:
         self.model=model.to(self.device)
         
     def get_outputs(self,inputs, max_new_tokens=200):
-        inputs = inputs.to(self.device)
+        inputs["input_ids"] = inputs["input_ids"].to(self.device)
+        inputs["attention_mask"] = inputs["attention_mask"].to(self.device)
         outputs = self.model.generate(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],

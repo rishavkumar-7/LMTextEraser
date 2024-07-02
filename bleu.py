@@ -70,12 +70,12 @@ class Bleu:
         self.bleu = load_metric("bleu")
         self.forget_dataset = dataset["unlearn"]
         self.original_dataset = dataset["original"]
-        # self.actual_dataset = dataset["actual"]
+        self.actual_dataset = dataset["actual"]
 
     def evaluate_model(self):
         # Ensure lengths of datasets match
         assert len(self.forget_dataset) == len(self.original_dataset), "Mismatch in forget and original datasets length"
-        # assert len(self.original_dataset) == len(self.actual_dataset), "Mismatch in original and actual datasets length"
+        assert len(self.original_dataset) == len(self.actual_dataset), "Mismatch in original and actual datasets length"
         
         # Print lengths for debugging
         # print(f"Length of forget_dataset: {len(self.forget_dataset)}")
@@ -84,21 +84,28 @@ class Bleu:
         
         # Prepare inputs for BLEU calculation
         forget_predictions = [pred.split() for pred in self.forget_dataset]
-        # original_predictions = [pred.split() for pred in self.original_dataset]
+        original_predictions = [pred.split() for pred in self.original_dataset]
         original_references = [[ref.split()] for ref in self.original_dataset]  # Ensure references are in the correct format
+        actual_reference = [[ref.split()] for ref in self.actual_dataset]
         
         # Print samples for debugging
-        print(f"Sample forget prediction: {forget_predictions[0]}")
+        # print(f"Sample forget prediction: {forget_predictions[0]}")
         # print(f"Sample original prediction: {original_predictions[0]}")
-        print(f"Sample original reference: {original_references[0]}")
+        # print(f"Sample original reference: {original_references[0]}")
         
         # Compute BLEU score for forget vs. original
         bleu_score_F_O = self.bleu.compute(
             predictions=forget_predictions,
             references=original_references
         )
+        # Compute BLEU score for original vs. forget
+        bleu_score_O_A = self.bleu.compute(
+            predictions = original_predictions,  # Should compare actual with original
+            references = actual_reference,
+        )
 
-        return bleu_score_F_O
+
+        return bleu_score_F_O, bleu_score_O_A
 
 # Example usage:
 # bleu_score_dataset = {
