@@ -1,5 +1,6 @@
 import pandas
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 from datasets import load_dataset
 from datasets import Dataset as dt
 from transformers import AutoTokenizer,DataCollatorForLanguageModeling
@@ -117,7 +118,7 @@ def create_retain_dataloader(dataset_name="truthfulQA", batch_size=4):
         data_dict["attention_mask"].append(tokenized["attention_mask"])
     retain_dataset = dt.from_dict(data_dict)
     # dataset_loader = Dataset_Loader_Retain(retain_dataset, tokenizer, data_dict)
-    data_loader = DataLoader(retain_dataset, batch_size=batch_size, collate_fn=data_collator, shuffle=True)
+    data_loader = DataLoader(retain_dataset, batch_size=batch_size, collate_fn=data_collator,shuffle=False,sampler=DistributedSampler(retain_dataset))
     print(f"\nDataLoader created : {dataset_name}")
 
     return data_loader

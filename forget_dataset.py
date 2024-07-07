@@ -2,6 +2,7 @@ from datasets import load_dataset
 from format_and_split import format_training_prompt,format_prompt_q
 from transformers import DataCollatorForLanguageModeling
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 import  torch
 from peft import PromptEmbedding, PromptTuningConfig  # Import PromptEmbedding and PromptTuningConfig
 from transformers import AutoTokenizer
@@ -157,8 +158,8 @@ def create_forget_dataloaderr(tokenizer, dataset_name="PKU-Alignment/PKU-SafeRLH
     # Add labels and make it data loader.
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, collate_fn=data_collator
+    dataloader = DataLoader(
+        dataset, batch_size=batch_size, collate_fn=data_collator,shuffle=False,sampler=DistributedSampler(dataset),
     )
     print(f"\nDataLoader created : {dataset_name}/{split}")
     return dataloader

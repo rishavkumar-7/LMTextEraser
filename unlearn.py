@@ -14,6 +14,7 @@ import argparse
 import logging
 import random
 import time
+from set_gpu import GPU
 from arguments import Argument
 from transformers import AutoTokenizer, pipeline,AutoModelForCausalLM
 from peft import PeftModel
@@ -29,6 +30,18 @@ from createDataset import create_forget_dataloader,create_retain_dataloader , ge
 from loss import get_answer_loss,compute_kl,get_rand_ans_loss
 from format_and_split import split_response
 from forget_dataset import inference_prompt
+
+# for parallel processing 
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group,destroy_process_group
+
+def ddp_setup(rank,world_size):
+    os.environ["MASTER_ADDR"] =  "localhost" # rank 0 process will be in this machine 
+    os.environ["MASTER_PORT"] = "12355"
+    torch.cuda.set_device(rank)
+    init_process_group(backend="nccl",rank=rank,world_size=world_size)
+
 
 torch.manual_seed(8888)
 np.random.seed(8888)
@@ -55,39 +68,27 @@ Model_Path={
     }
 }
 
-device=args.f_device
-device_p=args.p_device
-def main(args) -> None:
+
+def unlearn(args,rank) -> None:
+
+    
+    device=args.f_device
+    device_p=args.p_device
     accelerator = Accelerator() 
     bleu_dataset={"original":[],"normal":[],"unlearn":[]}
-
-    # if args.model == "tinyllama":
-    #     args.model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    #     args.model_path="/media/respailab/Volume 2/RespAI-Jupyter-Server/Priyansh-Rishav/LLM_Unlearn_Paper/tinyllama-colorist-v1/checkpoint-300/"
-    # else:
-    #     args.model_name="facebook/opt-1.3b"
-    #     args.model_path="/media/respailab/Volume 2/RespAI-Jupyter-Server/Priyansh-Rishav/LLM_Unlearn_Paper/opt1.3b_finetuned_model/"
-    # model = AutoModelForCausalLM.from_pretrained(args.model_name)
-
+    
     '''When using the finetuned model for training , it gives RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn'''
     # model = AutoModelForCausalLM.from_pretrained(args.model_path) #  using the finetuned model for training , it gives RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
-    model = AutoModelForCausalLM.from_pretrained(args.model_name) #  using the pretrained model from Hugging face library
-    # model for unlearning 
-    # if args.use_prompt_tuning:
-    peft_config = PromptTuningConfig(
-        task_type=TaskType.CAUSAL_LM,
-        prompt_tuning_init=PromptTuningInit.TEXT,
-        token_dim=2048,
-        num_virtual_tokens=args.num_virtual_tokens,
-        prompt_tuning_init_text="I have to forget this ,it is harmful for me :",
-        tokenizer_name_or_path=args.model_name,
-    )
-    # ----------------------------------------------------
-    model = get_peft_model(model, peft_config)
-    params=model.print_trainable_parameters()
-    print(params)
-
-    model.to(device)
+    
+    model=load_model(args)
+    # parallel processing 
+    # device_id=rank
+    gpu=GPU(rank)
+    gpu_id=gpu.get_gpu()
+    print(f"\n\ngpu id {gpu_id}\n\n")
+    model.to(gpu_id)
+    model=DDP(model,device_ids=[gpu_id])
+    
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     # Load harmful data.
@@ -139,7 +140,7 @@ def main(args) -> None:
         train_bad_loader, 
         train_normal_loader,
         lr_scheduler,
-        device_placement=device_placement
+        # device_placement=device_placement
     )
 
     model.train()
@@ -341,8 +342,32 @@ class Inference_Model:
             # eos_token_id=tokenizer.eos_token_id,
         )
         return outputs
+def load_model(args):
+    model = AutoModelForCausalLM.from_pretrained(args.model_name) #  using the pretrained model from Hugging face library
+    # model for unlearning 
+    # if args.use_prompt_tuning:
+    peft_config = PromptTuningConfig(
+        task_type=TaskType.CAUSAL_LM,
+        prompt_tuning_init=PromptTuningInit.TEXT,
+        token_dim=2048,
+        num_virtual_tokens=args.num_virtual_tokens,
+        prompt_tuning_init_text="I have to forget this ,it is harmful for me :",
+        tokenizer_name_or_path=args.model_name,
+    )
+    # ----------------------------------------------------
+    model = get_peft_model(model, peft_config)
+    model.print_trainable_parameters()
+    return model
+    
 
+def  main(rank,world_size,save_every,args):
+    ddp_setup(rank,world_size)
+    unlearn(args,rank)
+    destroy_process_group()
 
 if __name__ == "__main__":
-    args = Argument()
-    main(args)
+    arg = Argument()
+    save_every=100
+    world_size=torch.cuda.device_count()
+    mp.spawn(main,args=(world_size,save_every,arg),nprocs=world_size)
+    # main(args)

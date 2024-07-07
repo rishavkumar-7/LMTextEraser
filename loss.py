@@ -4,6 +4,7 @@
 # https://opensource.org/licenses/MIT
 
 import random
+from set_gpu import GPU
 import torch.nn as nn
 import numpy as np
 import pandas as pd
@@ -14,6 +15,9 @@ from transformers import DataCollatorForLanguageModeling
 from arguments import Argument
 # from unlearn import peft_config
 args = Argument()
+
+gpu = GPU()
+gpu_id = gpu.get_gpu()
 
 
 torch.manual_seed(8888)
@@ -90,10 +94,10 @@ def get_answer_loss(operation, batch, model, device="cuda"):
     """
     assert operation in ["ga", "gd"], "Operation must be either GA or GD."
     input_ids, attention_mask, start_locs, labels = (
-        batch["input_ids"].to(device),
-        batch["attention_mask"].to(device),
+        batch["input_ids"].to(gpu_id), # device -> GPU.get_gpu
+        batch["attention_mask"].to(gpu_id),
         batch["start_locs"],
-        batch["labels"].to(device),
+        batch["labels"].to(gpu_id),
     )
     outputs = model(input_ids, attention_mask=attention_mask)
     loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
@@ -157,9 +161,9 @@ def get_answer_loss(operation, batch, model, device="cuda"):
 '''Same loss function but added different device for both model to solve Cuda out of memory error !! '''
 def compute_kl(pretrained_model, current_model, batch, device_p,device):
     normal_outputs = current_model(
-        batch["input_ids"].to(device),
-        attention_mask=batch["attention_mask"].to(device),
-        labels=batch["labels"].to(device),
+        batch["input_ids"].to(gpu_id),
+        attention_mask=batch["attention_mask"].to(gpu_id),
+        labels=batch["labels"].to(gpu_id),
     )
 
     with torch.no_grad():
@@ -170,7 +174,7 @@ def compute_kl(pretrained_model, current_model, batch, device_p,device):
         )
 
     # P: pretrained model; Q: current model.
-    prob_p = torch.nn.functional.softmax(pretrained_outputs.logits, -1).to(device)
+    prob_p = torch.nn.functional.softmax(pretrained_outputs.logits, -1).to(gpu_id)
     prob_q = torch.nn.functional.softmax(normal_outputs.logits, -1)
     # print(f"\n\nprob pretrain p {prob_p.shape}\n\n")
     # print(f"\n\nprob normal q {prob_q.shape}\n\n")
@@ -183,7 +187,7 @@ def compute_kl(pretrained_model, current_model, batch, device_p,device):
 
 def get_rand_ans_loss(bad_batch, tokenizer, normal_ans, model, device,K=5):
 
-    bad_input_ids = bad_batch["input_ids"].to(device)
+    bad_input_ids = bad_batch["input_ids"].to(gpu_id)
     rand_ans_list = random.sample(normal_ans, k=K)
     batch_random_features = []
     for batch_idx in range(bad_input_ids.shape[0]):
@@ -223,7 +227,7 @@ def get_rand_ans_loss(bad_batch, tokenizer, normal_ans, model, device,K=5):
     batch_random = data_collator(batch_random_features)
 
     # GD on answer.
-    random_loss = get_answer_loss("gd", batch_random, model, device=device)
+    random_loss = get_answer_loss("gd", batch_random, model, device=gpu_id)
 
     return random_loss
 
