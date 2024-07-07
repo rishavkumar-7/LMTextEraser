@@ -1,6 +1,6 @@
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from nltk.translate.bleu_score import corpus_bleu
+# from nltk.translate.bleu_score import corpus_bleu
 import torch
 # class Bleu:
 #     def __init__(self,dataset):
